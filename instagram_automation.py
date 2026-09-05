@@ -117,12 +117,25 @@ SEARCH_QUERIES = [
     'site:instagram.com "cash on delivery" "Instagram photos and videos"',
     'site:instagram.com "free delivery" "Instagram photos and videos"',
     'site:instagram.com "order now" "Instagram photos and videos"',
+    'site:instagram.com "online store" "Instagram photos and videos"',
+    'site:instagram.com "online shopping" "Instagram photos and videos"',
+    'site:instagram.com "delivery available" "Instagram photos and videos"',
+    'site:instagram.com "shipping available" "Instagram photos and videos"',
+    'site:instagram.com "place your order" "Instagram photos and videos"',
 
     # --- Region-biased (Pakistan / India) ----------------------------------
     'site:instagram.com "COD available" Pakistan shop',
     'site:instagram.com "DM to order" Pakistan',
     'site:instagram.com "cash on delivery" Lahore OR Karachi',
     'site:instagram.com "DM to order" India shop',
+    'site:instagram.com "online store" Pakistan',
+    'site:instagram.com "online shopping" Pakistan',
+    'site:instagram.com "delivery all over Pakistan"',
+    'site:instagram.com "online store" India',
+    'site:instagram.com "online shopping" India',
+    'site:instagram.com "shipping all over India"',
+    'site:instagram.com "WhatsApp for order" Pakistan OR India',
+    'site:instagram.com "inbox to order" Pakistan OR India',
 
     # --- The original bare-phrase dorks, kept for breadth ------------------
     # These skew heavily to reels and so contribute few handles, but they
@@ -146,7 +159,21 @@ INCLUDE_KEYWORDS = [
     "shop now",
     "nationwide delivery",
     "free delivery",
+    "delivery available",
+    "shipping available",
+    "delivery all over pakistan",
+    "all over pakistan",
+    "shipping all over india",
+    "all over india",
+    "online store",
+    "online shopping",
+    "whatsapp for order",
+    "inbox to order",
+    "place your order",
+    "to place order",
     "pkr",
+    "inr",
+    "rs",
     "rs.",
 ]
 
@@ -160,7 +187,6 @@ EXCLUDE_KEYWORDS = [
     "influencer marketing",
     "we help brands",
     "grow your business",
-    "official account",
     "public figure",
     "fan page",
 ]
@@ -174,8 +200,8 @@ REQUEST_TIMEOUT = 30                     # seconds
 MAX_RETRIES = 3                          # per request, for rate-limit/5xx
 # Searlo rate-limits the whole /search/* group per minute, and the tier is set
 # by credits ever purchased -- a 3,000-credit pool is "Micro" = 20 req/min
-# ("Free" = 10/min). 16 queries x 1 page = 16 requests, so 4s spacing keeps us
-# near 15/min and avoids 429s. Raise this if you add many more queries.
+# ("Free" = 10/min). 4s spacing keeps requests near 15/min and avoids 429s.
+# Raise this if you change query volume.
 REQUEST_DELAY = 4.0                      # pause between calls (seconds)
 
 # Print the full raw JSON of the first DEBUG_RAW_LIMIT results per query.
@@ -238,7 +264,7 @@ GENERIC_TITLES = {
 INSTAGRAM_BOILERPLATE = re.compile(
     r"(?:\s*[•·|\-–—>]\s*|\s+on\s+)instagram\b.*$", re.IGNORECASE
 )
-HANDLE_RE = re.compile(r"@([A-Za-z0-9._]{1,30})")
+HANDLE_RE = re.compile(r"^[A-Za-z0-9._]{1,30}$")
 # Post/reel titles read '@handle on Instagram: "caption"', so the handle right
 # before "on Instagram" is unambiguously the author. Prefer that match over any
 # @mention that might appear inside the caption itself.
@@ -246,13 +272,27 @@ AUTHOR_HANDLE_RE = re.compile(
     r"@([A-Za-z0-9._]{1,30})\s+on\s+instagram", re.IGNORECASE
 )
 # Profile titles: 'COD AVAILABLE (@the__fashzone) - Instagram'
-PAREN_HANDLE_RE = re.compile(r"\(\s*@?([A-Za-z0-9._]{1,30})\s*\)")
+PAREN_HANDLE_RE = re.compile(r"\(\s*@([A-Za-z0-9._]{1,30})\s*\)")
 # Instagram's post meta description, which Searlo often returns as the snippet:
 #   '1,234 likes, 56 comments - shopname (@shopname) on August 12, 2024: "..."'
 META_AUTHOR_RE = re.compile(
     r"-\s*[^(]{0,80}\(\s*@([A-Za-z0-9._]{1,30})\s*\)\s+on\s", re.IGNORECASE
 )
 TRAILING_HANDLE_RE = re.compile(r"\s*\(\s*@?[A-Za-z0-9._]{1,30}\s*\)\s*$")
+
+# The first implementation carried mojibake variants of Instagram's title
+# separators. Redefine the patterns with explicit Unicode escapes so normal
+# Google titles using "Name (@handle) \u2022 Instagram photos and videos" clean
+# correctly while still accepting mojibake from older console output.
+INSTAGRAM_BOILERPLATE = re.compile(
+    r"(?:\s*(?:[\u2022\u00b7|>\-]|\u2013|\u2014|â€¢|Â·|â€“|â€”)\s*|\s+on\s+)"
+    r"instagram\b.*$",
+    re.IGNORECASE,
+)
+CURRENCY_RE = re.compile(
+    r"(?<![A-Za-z0-9])(?:pkr|inr|rs/-|rs\.?|\u20b9)\s*\d",
+    re.IGNORECASE,
+)
 
 
 # ----------------------------------------------------------------------------
@@ -480,6 +520,16 @@ def is_instagram_url(url):
     return host is not None
 
 
+def is_valid_handle(handle):
+    """True when a string is plausible as an Instagram username."""
+    candidate = (handle or "").strip()
+    if not HANDLE_RE.fullmatch(candidate):
+        return False
+    if candidate.lower() in RESERVED_PATHS:
+        return False
+    return True
+
+
 def handle_from_path(url):
     """
     Pull the owning account's handle out of a URL path, or return "".
@@ -506,10 +556,11 @@ def handle_from_path(url):
 
     first = segments[0].lower()
     if first == "_u":                    # mobile profile redirect
-        return segments[1] if len(segments) > 1 else ""
+        handle = segments[1] if len(segments) > 1 else ""
+        return handle.lower() if is_valid_handle(handle) else ""
     if first in RESERVED_PATHS:          # one of the site's own routes
         return ""
-    return segments[0]                   # account-owned page
+    return segments[0].lower() if is_valid_handle(segments[0]) else ""
 
 
 def handle_from_text(text):
@@ -525,8 +576,8 @@ def handle_from_text(text):
         return ""
     for pattern in (AUTHOR_HANDLE_RE, META_AUTHOR_RE, PAREN_HANDLE_RE):
         match = pattern.search(text)
-        if match:
-            return match.group(1)
+        if match and is_valid_handle(match.group(1)):
+            return match.group(1).lower()
     return ""
 
 
@@ -644,7 +695,10 @@ def passes_filter(text):
     exclude term, = FAIL.
     """
     lowered = (text or "").lower()
-    has_include = any(_keyword_present(kw, lowered) for kw in INCLUDE_KEYWORDS)
+    has_include = (
+        any(_keyword_present(kw, lowered) for kw in INCLUDE_KEYWORDS)
+        or bool(CURRENCY_RE.search(text or ""))
+    )
     has_exclude = any(_keyword_present(kw, lowered) for kw in EXCLUDE_KEYWORDS)
     return has_include and not has_exclude
 
@@ -791,6 +845,7 @@ def main():
         # Canonicalize, so instagram.com/x/, m.instagram.com/_u/x,
         # www-fallback.instagram.com/x, instagram.com/x/reels/ and
         # instagram.com/x/p/<id>/ all collapse to ONE dedupable lead.
+        handle = handle.lower()
         url = f"https://www.instagram.com/{handle}/"
 
         normalized = normalize_url(url)
