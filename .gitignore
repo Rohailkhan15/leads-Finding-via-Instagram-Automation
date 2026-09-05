@@ -1,0 +1,13 @@
+# Never commit credentials or local secrets
+*.json
+.env
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Virtual environments (local testing only -- never commit these)
+.venv/
+venv/
+env/
+Instagram_Automation_Plan_Standalone_Repo.md
